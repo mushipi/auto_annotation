@@ -1,0 +1,25 @@
+{
+    "image_id": "test_image",
+    "objects": [
+        {
+            "id": 0,
+            "label": "person",
+            "bbox": [
+                100.0,
+                100.0,
+                200.0,
+                300.0
+            ]
+        },
+        {
+            "id": 1,
+            "label": "already_converted",
+            "bbox": [
+                50.0,
+                50.0,
+                20.0,
+                30.0
+            ]
+        }
+    ]
+}

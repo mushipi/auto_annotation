@@ -1,0 +1,31 @@
+[tool.uv.sources]
+sam3 = { path = "../sam3_test/sam3", editable = true }
+
+[project]
+name = "auto-annotation"
+version = "0.1.0"
+description = "Automated annotation tool using Reolink camera and SAM3"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "torch",
+    "torchvision",
+    "opencv-python",
+    "pillow",
+    "numpy",
+    "pyyaml",
+    "requests",
+    "matplotlib",
+    "einops",
+    "timm",
+    "sam3",
+    "decord",
+    "pycocotools",
+    "scikit-image",
+    "psutil",
+    # API Server dependencies
+    "fastapi>=0.109.0",
+    "uvicorn>=0.27.0",
+    "pydantic>=2.0.0",
+]
+

@@ -1,0 +1,38 @@
+camera:
+  ip: "192.168.31.85"  # hamcam4 config.pyより
+  http_port: 8000      # hamcam4 config.pyより
+  username: "admin"
+  password: "894890aa" # ユーザーが変更する必要があります
+  # ストリーム設定 (RTSP)
+  rtsp_port: 554
+  main_stream_suffix: "/h264Preview_01_main"
+  sub_stream_suffix: "/h264Preview_01_sub"
+
+motion_detection:
+  enabled: true
+  method: "api"  # "api" (カメラ内蔵検知) or "software" (映像差分)
+  polling_interval: 0.5  # 秒 (APIポーリング間隔)
+  cooldown: 3.0  # 検知後のクールダウン（秒）
+
+output:
+  base_dir: "output"
+  save_images: true
+  save_masks: true
+  save_json: true
+  filename_format: "%Y%m%d_%H%M%S"
+  max_captures: 1000  # 最大取得枚数（0または空で無制限）
+
+system:
+  log_level: "INFO"
+
+# Annotation configuration (for src/annotator.py)
+annotation:
+  device: "cuda"  # or "cpu"
+  prompt: "hamster"
+  confidence_threshold: 0.5
+  recalculate_bbox_from_mask: false
+
+# API Server configuration (for api_server.py)
+api:
+  host: "127.0.0.1"
+  port: 8000

@@ -1,0 +1,247 @@
+import argparse
+import time
+import logging
+import json
+import cv2
+import os
+from datetime import datetime
+from pathlib import Path
+
+from src.utils import setup_logging, load_config, ensure_dir
+from src.camera import ReolinkCamera
+from src.motion_detector import MotionDetector
+from src.annotator import SAM3Annotator
+
+logger = logging.getLogger(__name__)
+
+def save_results(config, image, results, timestamp_str):
+    """
+    結果（画像、マスク、JSON）を保存する
+    """
+    base_dir = Path(config['output']['base_dir'])
+    images_dir = base_dir / "images"
+    masks_dir = base_dir / "masks"
+    annotations_dir = base_dir / "annotations"
+    
+    ensure_dir(images_dir)
+    ensure_dir(masks_dir)
+    ensure_dir(annotations_dir)
+    
+    filename_base = timestamp_str
+    
+    # 1. 画像保存
+    image_filename = f"{filename_base}.jpg"
+    image_path = images_dir / image_filename
+    if config['output']['save_images']:
+        cv2.imwrite(str(image_path), image)
+        logger.info(f"Saved image: {image_path}")
+
+    # 2. マスク保存 & JSONデータ構築
+    objects_data = []
+    
+    if results and config['output']['save_masks']:
+        for i, mask in enumerate(results['masks']):
+            mask_filename = f"{filename_base}_mask_{i}.png"
+            mask_path = masks_dir / mask_filename
+            
+            # マスクを保存 (0 or 255)
+            # マスクがbool配列の場合は変換
+            if mask.dtype == bool:
+                mask_img = (mask.astype('uint8') * 255)
+            else:
+                mask_img = (mask * 255).astype('uint8')
+            
+            # 2D配列にする（もし3D以上の場合は最初の次元を取る）
+            if mask_img.ndim > 2:
+                mask_img = mask_img[0] if mask_img.shape[0] == 1 else mask_img.squeeze()
+            
+            try:
+                cv2.imwrite(str(mask_path), mask_img)
+            except Exception as e:
+                logger.warning(f"Failed to save mask {i}: {e}. Skipping mask save.")
+                mask_path = None
+            
+            # JSON用データ (numpy配列をリストに変換)
+            bbox = results['boxes'][i]
+            if hasattr(bbox, 'tolist'):
+                bbox = bbox.tolist()
+            elif isinstance(bbox, np.ndarray):
+                bbox = bbox.tolist()
+            
+            obj = {
+                "id": i,
+                "label": results['labels'][i],
+                "confidence": float(results['scores'][i]),  # numpy型をPython floatに
+                "bbox": bbox,
+                "mask_path": str(mask_path.relative_to(base_dir)).replace("\\", "/") if mask_path else None
+            }
+            objects_data.append(obj)
+
+    # 3. JSON保存
+    if config['output']['save_json']:
+        json_data = {
+            "image_id": filename_base,
+            "timestamp": datetime.now().isoformat(),
+            "image_path": str(image_path.relative_to(base_dir)).replace("\\", "/"),
+            "prompt": config['sam3']['prompt'],
+            "objects": objects_data
+        }
+        
+        json_filename = f"{filename_base}.json"
+        json_path = annotations_dir / json_filename
+        
+        with open(json_path, 'w', encoding='utf-8') as f:
+            json.dump(json_data, f, indent=2, ensure_ascii=False)
+        logger.info(f"Saved annotation: {json_path}")
+
+def main_loop(config, camera, detector, annotator, run_once=False):
+    """
+    メインの監視・アノテーションループ
+    """
+    logger.info("Starting main loop...")
+    
+    polling_interval = config['motion_detection']['polling_interval']
+    cooldown = config['motion_detection']['cooldown']
+    max_captures = config['output'].get('max_captures', 0)  # 0なら無制限
+    
+    capture_count = 0
+    
+    if max_captures > 0:
+        logger.info(f"Maximum captures set to: {max_captures}")
+    
+    while True:
+        try:
+            # 1. 動体検知
+            if detector.check_motion():
+                logger.info("Motion DETECTED!")
+                
+                # 2. 撮影
+                image = camera.get_snapshot()
+                if image is None:
+                    logger.warning("Failed to capture snapshot.")
+                    continue
+                
+                timestamp = datetime.now().strftime(config['output']['filename_format'])
+                
+                # 3. アノテーション
+                logger.info("Running annotation...")
+                results = annotator.annotate(image)
+                
+                if results:
+                    logger.info(f"Detected {len(results['masks'])} objects.")
+                    
+                    # 4. 保存
+                    save_results(config, image, results, timestamp)
+                    
+                    # カウンター増加 (マスク数をカウント)
+                    num_masks = len(results['masks'])
+                    capture_count += num_masks
+                    logger.info(f"Progress: {capture_count} masks / {max_captures if max_captures > 0 else '∞'} (Limit)")
+                    
+                    # 上限チェック
+                    if max_captures > 0 and capture_count >= max_captures:
+                        logger.info(f"Reached maximum mask count ({max_captures}). Exiting...")
+                        break
+                else:
+                    logger.info("No objects detected by SAM3.")
+                
+                if run_once:
+                    break
+                
+                # クールダウン
+                logger.info(f"Cooling down for {cooldown} seconds...")
+                time.sleep(cooldown)
+            
+            else:
+                # 動体なし
+                time.sleep(polling_interval)
+                
+        except KeyboardInterrupt:
+            logger.info("Stopped by user.")
+            break
+        except Exception as e:
+            logger.error(f"Error in main loop: {e}")
+            time.sleep(5) # エラー時は少し待機
+    
+    logger.info(f"Main loop finished. Total captures: {capture_count}")
+
+def test_camera(camera):
+    logger.info("Testing camera connection...")
+    if camera.connect():
+        logger.info("Connection OK.")
+        img = camera.get_snapshot()
+        if img is not None:
+            logger.info(f"Snapshot OK. Size: {img.shape}")
+        else:
+            logger.error("Snapshot Failed.")
+    else:
+        logger.error("Connection Failed.")
+
+def test_sam(annotator):
+    logger.info("Testing SAM3 model...")
+    if annotator.load_model():
+        logger.info("Model loaded.")
+        # ダミー画像で推論テスト
+        import numpy as np
+        dummy_img = np.zeros((720, 1280, 3), dtype=np.uint8)
+        results = annotator.annotate(dummy_img)
+        if results is not None:
+            logger.info("Inference test OK (even with dummy image).")
+        else:
+            logger.error("Inference test Failed.")
+    else:
+        logger.error("Model load Failed.")
+
+def test_motion(detector):
+    logger.info("Testing motion detection (Ctrl+C to stop)...")
+    try:
+        while True:
+            detected = detector.check_motion()
+            state = "DETECTED" if detected else "Clear"
+            print(f"\rMotion State: {state}", end="")
+            time.sleep(0.5)
+    except KeyboardInterrupt:
+        print("\nStopped.")
+
+def main():
+    parser = argparse.ArgumentParser(description="Auto Annotation Tool")
+    parser.add_argument('--config', '-c', default='config.yaml', help='Path to config file')
+    parser.add_argument('--mode', '-m', default='auto', choices=['auto', 'test-camera', 'test-sam', 'test-motion'], help='Execution mode')
+    parser.add_argument('--once', action='store_true', help='Run once and exit (for auto mode)')
+    parser.add_argument('--verbose', '-v', action='store_true', help='Verbose logging')
+    
+    args = parser.parse_args()
+    
+    log_level = "DEBUG" if args.verbose else "INFO"
+    setup_logging(log_level)
+    
+    # 設定読み込み
+    config = load_config(args.config)
+    
+    # コンポーネント初期化
+    camera = ReolinkCamera(config['camera'])
+    detector = MotionDetector(config['motion_detection'], camera)
+    annotator = SAM3Annotator(config['sam3'])
+    
+    if args.mode == 'test-camera':
+        test_camera(camera)
+    elif args.mode == 'test-sam':
+        test_sam(annotator)
+    elif args.mode == 'test-motion':
+        # 動体検知テスト前にも接続が必要
+        if not camera.connect():
+            logger.warning("Camera connection failed, but trying to proceed (maybe RTSP works)...")
+        test_motion(detector)
+    elif args.mode == 'auto':
+        # モデルロードはautoモードの最初に行う
+        if not annotator.load_model():
+            logger.error("Failed to initialize SAM3 model. Exiting.")
+            return
+            
+        if not camera.connect():
+            logger.warning("Camera connection check failed, but proceeding...")
+            
+        main_loop(config, camera, detector, annotator, run_once=args.once)
+
+if __name__ == "__main__":
+    main()

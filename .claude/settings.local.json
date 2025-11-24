@@ -1,0 +1,6 @@
+{
+  "enabledMcpjsonServers": [
+    "chrome-mcp"
+  ],
+  "enableAllProjectMcpServers": true
+}
