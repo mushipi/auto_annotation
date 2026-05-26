@@ -1,8 +1,8 @@
 camera:
-  ip: "${CAMERA_IP}"           # 環境変数 CAMERA_IP を設定してください
+  ip: "192.168.x.x"        # または環境変数 CAMERA_IP
   http_port: 8000
-  username: "${CAMERA_USER}"   # 環境変数 CAMERA_USER を設定してください
-  password: "${CAMERA_PASSWORD}" # 環境変数 CAMERA_PASSWORD を設定してください
+  username: "admin"         # または環境変数 CAMERA_USER
+  password: "your_password" # または環境変数 CAMERA_PASSWORD（推奨）
   rtsp_port: 554
   main_stream_suffix: "/h264Preview_01_main"
   sub_stream_suffix: "/h264Preview_01_sub"
