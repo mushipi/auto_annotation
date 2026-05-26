@@ -4,6 +4,9 @@ import time
 import logging
 import urllib3
 import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # SSL警告を抑制
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -16,22 +19,20 @@ logger = logging.getLogger(__name__)
 class ReolinkCamera:
     def __init__(self, config):
         self.config = config
-        self.ip = config['ip']
+        # 環境変数が設定されていればそちらを優先（.env または export で設定）
+        self.ip       = os.environ.get('CAMERA_IP')       or config['ip']
+        self.username = os.environ.get('CAMERA_USER')     or config['username']
+        self.password = os.environ.get('CAMERA_PASSWORD') or config['password']
         self.http_port = config['http_port']
-        self.username = config['username']
-        self.password = config['password']
-        
+
         self.protocol = config.get('protocol', 'http')
         self.base_url = f"{self.protocol}://{self.ip}:{self.http_port}/cgi-bin/api.cgi"
-        
-        # RTSP URLの構築
-        # hamcam4に合わせてquoteを使用しない
+
         safe_password = self.password
         self.main_stream_url = f"rtsp://{self.username}:{safe_password}@{self.ip}:{config['rtsp_port']}{config['main_stream_suffix']}"
-        self.sub_stream_url = f"rtsp://{self.username}:{safe_password}@{self.ip}:{config['rtsp_port']}{config['sub_stream_suffix']}"
-        
-        self.api_available = False
+        self.sub_stream_url  = f"rtsp://{self.username}:{safe_password}@{self.ip}:{config['rtsp_port']}{config['sub_stream_suffix']}"
 
+        self.api_available = False
     def connect(self):
         """
         カメラへの接続テスト
